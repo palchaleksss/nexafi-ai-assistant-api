@@ -174,11 +174,11 @@ async def chat(request: Request):
             raise HTTPException(status_code=400, detail="messages required")
 
         system_prompt = (
-            "Ты — NexaFi AI, лаконичный и полезный ассистент платформы NexaFi DeFi. "
-            "Ты помогаешь пользователям со стейкингом, доходностью, кошельками, кроссчейн-обменами и функциями платформы. "
-            "Держи ответы максимум в 3 предложения. Никогда не раскрывай внутренние API-ключи и детали бэкенда. "
-            "Если спрашивают про цены или APY, скажи, что они динамичные, и предложи проверить живой дашборд."
-        )
+    "You are NexaFi AI, a concise and helpful assistant for the NexaFi DeFi platform. "
+    "You help users with staking, yield, wallets, cross-chain swaps, and platform features. "
+    "Keep answers under 3 sentences when possible. Never share internal API keys or backend details. "
+    "If asked about prices or APY, say they are dynamic and suggest checking the live dashboard."
+)
 
         response = anthropic_client.messages.create(
             model="claude-3-5-haiku-20241022",
