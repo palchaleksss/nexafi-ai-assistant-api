@@ -5,8 +5,8 @@ import anthropic
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
-from slowapi import Limiter
+from fastapi.responses import HTMLResponse, JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
@@ -14,7 +14,7 @@ app = FastAPI()
 
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, lambda r, e: HTTPException(status_code=429, detail="Too many requests"))
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -145,12 +145,58 @@ def get_cached_dashboard():
     return data
 
 
+@app.get("/")
+async def root():
+    return {"status": "ok"}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.get("/api/dashboard")
 async def dashboard():
     try:
         return get_cached_dashboard()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/chat")
+@limiter.limit("15/minute")
+async def chat(request: Request):
+    try:
+        body = await request.json()
+        messages = body.get("messages", [])
+
+        if not isinstance(messages, list) or not messages:
+            raise HTTPException(status_code=400, detail="messages required")
+
+        system_prompt = (
+            "Ты — NexaFi AI, лаконичный и полезный ассистент платформы NexaFi DeFi. "
+            "Ты помогаешь пользователям со стейкингом, доходностью, кошельками, кроссчейн-обменами и функциями платформы. "
+            "Держи ответы максимум в 3 предложения. Никогда не раскрывай внутренние API-ключи и детали бэкенда. "
+            "Если спрашивают про цены или APY, скажи, что они динамичные, и предложи проверить живой дашборд."
+        )
+
+        response = anthropic_client.messages.create(
+            model="claude-3-5-haiku-20241022",
+            max_tokens=250,
+            temperature=0.7,
+            system=system_prompt,
+            messages=messages
+        )
+
+        return {"reply": response.content[0].text}
+
+    except anthropic.APIError:
+        raise HTTPException(status_code=502, detail="AI service temporarily unavailable")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.post("/api/chat")
