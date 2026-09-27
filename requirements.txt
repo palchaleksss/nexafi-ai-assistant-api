@@ -1,5 +1,4 @@
 fastapi
-uvicorn
-requests
-anthropic
-slowapi
+uvicorn[standard]
+httpx
+pydantic
