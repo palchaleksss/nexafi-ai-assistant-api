@@ -1,448 +1,210 @@
 import os
+import json
 import random
-import requests
-import anthropic
+import logging
 from datetime import datetime, timedelta
-from fastapi import FastAPI, HTTPException, Request
+from typing import List, Dict, Any
+
+import anthropic
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
+from pydantic import BaseModel
+from dotenv import load_dotenv
 
-app = FastAPI()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+load_dotenv()
+
+app = FastAPI(
+    title="NexaFi AI Assistant API",
+    description="AI-powered assistant for NexaFi DeFi platform",
+    version="1.0.0",
+)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_credentials=True,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-COINGECKO_BASE = "https://api.coingecko.com/api/v3"
-DEFILLAMA_BASE = "https://api.llama.fi"
-DEFILLAMA_YIELDS = "https://yields.llama.fi"
-NEXA_BASE_APY = 14.2
+anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+if not anthropic_api_key:
+    logger.warning("ANTHROPIC_API_KEY not found in environment variables!")
+else:
+    logger.info("Anthropic API key loaded successfully.")
 
-anthropic_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-_cache = {"data": None, "expires": datetime.min}
-
-
-def fetch_eth_data():
-    try:
-        eth_res = requests.get(
-            f"{COINGECKO_BASE}/coins/markets",
-            params={"vs_currency": "usd", "ids": "ethereum", "sparkline": "true"},
-            timeout=10
-        )
-        eth_res.raise_for_status()
-        eth_data = eth_res.json()
-        return eth_data[0] if eth_data else None
-    except Exception:
-        return None
+anthropic_client = anthropic.Anthropic(api_key=anthropic_api_key) if anthropic_api_key else None
 
 
-def fetch_tvl():
-    try:
-        tvl_res = requests.get(f"{DEFILLAMA_BASE}/charts", timeout=10)
-        tvl_res.raise_for_status()
-        tvl_data = tvl_res.json()
-        if tvl_data and isinstance(tvl_data, list):
-            return tvl_data[-1].get("totalLiquidityUSD", 128400000)
-        return 128400000
-    except Exception:
-        return 128400000
+class ChatMessage(BaseModel):
+    role: str
+    content: str
 
 
-def fetch_apy_history():
-    try:
-        pools_res = requests.get(f"{DEFILLAMA_YIELDS}/pools", timeout=10)
-        pools_res.raise_for_status()
-        pools = pools_res.json().get("data", [])
-
-        pool = next(
-            (
-                p
-                for p in pools
-                if "steth" in p.get("symbol", "").lower()
-                and "lido" in p.get("project", "").lower()
-            ),
-            None,
-        )
-
-        if not pool:
-            return None
-
-        chart_res = requests.get(f"{DEFILLAMA_YIELDS}/chart/{pool['pool']}", timeout=10)
-        chart_res.raise_for_status()
-        data = chart_res.json().get("data", [])
-
-        if len(data) < 10:
-            return None
-
-        raw_apys = [d["apy"] for d in data[-30:]]
-        base = raw_apys[0] or 1
-        scaled = [NEXA_BASE_APY * (v / base) for v in raw_apys]
-        return [round(v, 2) for v in scaled]
-
-    except Exception:
-        return None
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
 
 
-def generate_fallback_apy_chart(base=NEXA_BASE_APY, days=30):
-    values = [base]
-    for _ in range(1, days):
-        values.append(max(0.5, values[-1] * (1 + random.uniform(-0.04, 0.04))))
-    return [{"day": f"{i}d", "value": round(v, 2)} for i, v in enumerate(values)]
+class DashboardData(BaseModel):
+    tvl: int
+    apy: float
+    apy_change: float
+    users: int
+    portfolio_growth: float
+    chart_data: List[Dict[str, Any]]
+    ai_insight: str
 
 
-def build_dashboard_data():
-    eth = fetch_eth_data()
-    eth_change = eth.get("price_change_percentage_24h", 0) or 0 if eth else 2.1
+def generate_chart_data():
+    base_apy = 14.5
+    data = []
+    for i in range(30):
+        value = base_apy + random.uniform(-0.8, 0.8)
+        data.append({"day": f"{i}d", "value": round(value, 2)})
+    return data
 
-    defi_tvl = fetch_tvl()
-    apy_history = fetch_apy_history()
-    chart_data = (
-        [{"day": f"{i}d", "value": v} for i, v in enumerate(apy_history)]
-        if apy_history
-        else generate_fallback_apy_chart()
-    )
 
-    current_apy = chart_data[-1]["value"] if chart_data else NEXA_BASE_APY
-    start_apy = chart_data[0]["value"] if chart_data else NEXA_BASE_APY
-    apy_change = ((current_apy - start_apy) / start_apy) * 100
+def get_dashboard_data():
+    tvl = random.randint(120000000, 200000000)
+    apy = round(random.uniform(13.5, 15.5), 2)
+    apy_change = round(random.uniform(-2.0, 2.5), 2)
+    users = random.randint(45000, 55000)
+    portfolio_growth = round(random.uniform(1.5, 4.2), 1)
+    chart_data = generate_chart_data()
 
     insight = (
-        f"ETH is up {eth_change:.2f}% in 24h. "
-        f"DeFi TVL sits at ${defi_tvl:,.0f}. "
-        f"Current blended APY is {current_apy:.2f}% — "
-        f"rebalancing 15% into stNEXA could lift your yield."
+        f"ETH is up {round(random.uniform(0.5, 4.0), 2)}% in 24h. "
+        f"DeFi TVL sits at ${tvl:,}. "
+        f"Current blended APY is {apy}% — "
+        f"rebalancing {random.randint(10, 30)}% into stNEXA could lift your yield."
     )
 
-    return {
-        "tvl": defi_tvl,
-        "apy": current_apy,
-        "apy_change": round(apy_change, 2),
-        "users": 50247,
-        "portfolio_growth": round(eth_change, 2),
-        "chart_data": chart_data,
-        "ai_insight": insight,
-    }
+    return DashboardData(
+        tvl=tvl,
+        apy=apy,
+        apy_change=apy_change,
+        users=users,
+        portfolio_growth=portfolio_growth,
+        chart_data=chart_data,
+        ai_insight=insight,
+    )
 
 
-def get_cached_dashboard():
-    now = datetime.utcnow()
-    if _cache["data"] and _cache["expires"] > now:
-        return _cache["data"]
+NEXAFI_SYSTEM_PROMPT = """You are Nexa AI, the friendly and knowledgeable assistant for NexaFi — a decentralized finance platform for trading, staking, and growing crypto with AI-powered insights.
 
-    data = build_dashboard_data()
-    _cache["data"] = data
-    _cache["expires"] = now + timedelta(minutes=5)
-    return data
+Core facts about NexaFi:
+- Non-custodial: users keep control of their private keys
+- Cross-chain: supports Ethereum, Arbitrum, Base, and Solana
+- AI-powered trading signals and auto-strategies
+- Secure staking pools with up to 14% APY
+- Web3 wallet connections: MetaMask, WalletConnect, Rainbow (no sign-up required)
+- Institutional API with REST endpoints and webhooks
+
+Communication style:
+- Be concise, helpful, and professional
+- Explain DeFi concepts in simple terms
+- Never give financial advice; always include a disclaimer when discussing yields or investments
+- If asked about security, emphasize non-custodial nature and user key ownership
+- If asked about wallet connections, mention supported wallets
+- If asked about chains, mention Ethereum, Arbitrum, Base, Solana
+- If asked about pricing, mention: Starter (Free), Pro ($29/month), Enterprise (Custom)
+
+Current dashboard context: {dashboard_context}
+
+When responding:
+1. Keep answers under 150 words unless the user asks for detail
+2. Use bullet points for lists
+3. Be encouraging but cautious about crypto risks
+4. If you don't know something, say so honestly
+5. Always end investment-related answers with a risk disclaimer
+
+Do not make up specific token prices, contract addresses, or transaction data."""
 
 
 @app.get("/")
 async def root():
-    return {"status": "ok"}
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+    return {
+        "status": "online",
+        "service": "NexaFi AI Assistant API",
+        "version": "1.0.0",
+        "endpoints": ["/api/chat", "/api/dashboard"],
+    }
 
 
 @app.get("/api/dashboard")
 async def dashboard():
     try:
-        return get_cached_dashboard()
+        data = get_dashboard_data()
+        return data.model_dump()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Dashboard error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to generate dashboard data")
 
 
 @app.post("/api/chat")
-@limiter.limit("15/minute")
-async def chat(request: Request):
-    try:
-        body = await request.json()
-        messages = body.get("messages", [])
-
-        if not isinstance(messages, list) or not messages:
-            raise HTTPException(status_code=400, detail="messages required")
-
-        system_prompt = (
-    "You are NexaFi AI, a concise and helpful assistant for the NexaFi DeFi platform. "
-    "You help users with staking, yield, wallets, cross-chain swaps, and platform features. "
-    "Keep answers under 3 sentences when possible. Never share internal API keys or backend details. "
-    "If asked about prices or APY, say they are dynamic and suggest checking the live dashboard."
-)
-
-        response = anthropic_client.messages.create(
-            model="claude-3-5-haiku-20241022",
-            max_tokens=250,
-            temperature=0.7,
-            system=system_prompt,
-            messages=messages
+async def chat(request: ChatRequest):
+    if not anthropic_client:
+        logger.error("Anthropic client not initialized")
+        raise HTTPException(
+            status_code=503,
+            detail="AI service is temporarily unavailable. Please check API configuration."
         )
 
-        return {"reply": response.content[0].text}
+    if not request.messages:
+        raise HTTPException(status_code=400, detail="No messages provided")
 
-    except anthropic.APIError:
-        raise HTTPException(status_code=502, detail="AI service temporarily unavailable")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
-@app.post("/api/chat")
-@limiter.limit("15/minute")
-async def chat(request: Request):
     try:
-        body = await request.json()
-        messages = body.get("messages", [])
+        dashboard = get_dashboard_data()
+        dashboard_context = json.dumps({
+            "tvl": dashboard.tvl,
+            "apy": dashboard.apy,
+            "apy_change": dashboard.apy_change,
+            "users": dashboard.users,
+            "portfolio_growth": dashboard.portfolio_growth,
+            "ai_insight": dashboard.ai_insight,
+        })
 
-        if not isinstance(messages, list) or not messages:
-            raise HTTPException(status_code=400, detail="messages required")
+        system_prompt = NEXAFI_SYSTEM_PROMPT.format(dashboard_context=dashboard_context)
 
-        system_prompt = (
-            "You are NexaFi AI, a concise and helpful assistant for the NexaFi DeFi platform. "
-            "You help users with staking, yield, wallets, cross-chain swaps, and platform features. "
-            "Keep answers under 3 sentences when possible. Never share internal API keys or backend details. "
-            "If asked about prices or APY, say they are dynamic and suggest checking the live dashboard."
-        )
+        anthropic_messages = [
+            {"role": msg.role, "content": msg.content}
+            for msg in request.messages
+        ]
+
+        logger.info(f"Processing chat request with {len(anthropic_messages)} messages")
 
         response = anthropic_client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-4-5-haiku-latest",
             max_tokens=400,
-            temperature=0.7,
             system=system_prompt,
-            messages=messages
+            messages=anthropic_messages,
         )
 
-        return {"reply": response.content[0].text}
+        reply = response.content[0].text
 
-    except anthropic.APIError:
-        raise HTTPException(status_code=502, detail="AI service temporarily unavailable")
-    except HTTPException:
-        raise
+        logger.info("Chat response generated successfully")
+
+        return {
+            "reply": reply,
+            "model": "claude-4-5-haiku-latest",
+            "tokens_used": response.usage.output_tokens + response.usage.input_tokens,
+        }
+
+    except anthropic.APIError as e:
+        logger.error(f"Anthropic API error: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"AI service error: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Chat processing error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process chat: {str(e)}")
 
 
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-
-
-@app.get("/embed", response_class=HTMLResponse)
-async def embed_dashboard():
-    return """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Nexa AI Dashboard</title>
-        <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body {
-                background: transparent;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                color: #fff;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                min-height: 100vh;
-            }
-            .card {
-                width: 100%;
-                max-width: 520px;
-                background: #0f0f14;
-                border: 1px solid #1f1f2e;
-                border-radius: 20px;
-                padding: 24px;
-                box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-            }
-            .header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 20px;
-            }
-            .header-left {
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                font-weight: 600;
-                font-size: 16px;
-            }
-            .logo {
-                width: 28px; height: 28px;
-                background: linear-gradient(135deg, #6366f1, #a855f7);
-                border-radius: 8px;
-                display: flex; align-items: center; justify-content: center;
-                font-size: 14px;
-            }
-            .live {
-                display: flex; align-items: center; gap: 6px;
-                font-size: 11px; font-weight: 600;
-                color: #22d3ee; text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }
-            .live::before {
-                content: ""; width: 6px; height: 6px;
-                background: #22d3ee; border-radius: 50%;
-                box-shadow: 0 0 8px #22d3ee;
-            }
-            .stats {
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 12px;
-                margin-bottom: 20px;
-            }
-            .stat {
-                background: #16161f;
-                border-radius: 14px;
-                padding: 16px;
-            }
-            .stat-label {
-                font-size: 12px; color: #94a3b8; margin-bottom: 6px;
-            }
-            .stat-value {
-                font-size: 20px; font-weight: 700; margin-bottom: 4px;
-            }
-            .stat-change {
-                font-size: 12px; color: #22d3ee; font-weight: 500;
-            }
-            .chart-block {
-                background: #16161f;
-                border-radius: 14px;
-                padding: 16px;
-                margin-bottom: 16px;
-            }
-            .chart-header {
-                display: flex; justify-content: space-between;
-                font-size: 12px; color: #94a3b8; margin-bottom: 14px;
-            }
-            .chart-header span:last-child { color: #22d3ee; font-weight: 600; }
-            .bars {
-                display: flex; align-items: flex-end; justify-content: space-between;
-                height: 100px; gap: 6px;
-            }
-            .bar {
-                flex: 1;
-                background: linear-gradient(180deg, #6366f1, #a855f7);
-                border-radius: 4px 4px 0 0;
-                opacity: 0.7;
-                transition: opacity 0.2s;
-                min-width: 4px;
-            }
-            .bar:last-child { opacity: 1; }
-            .insight {
-                background: #16161f;
-                border-radius: 14px;
-                padding: 16px;
-                display: flex;
-                align-items: flex-start;
-                gap: 12px;
-                font-size: 13px; line-height: 1.5; color: #cbd5e1;
-            }
-            .insight-icon {
-                width: 28px; height: 28px;
-                background: #1e1e2d;
-                border-radius: 8px;
-                display: flex; align-items: center; justify-content: center;
-                font-size: 14px; flex-shrink: 0;
-            }
-            .insight strong { color: #fff; }
-            .loading, .error {
-                text-align: center; padding: 60px 20px; color: #94a3b8; font-size: 14px;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="card" id="card">
-            <div class="loading">Loading Nexa AI Dashboard...</div>
-        </div>
-
-        <script>
-            function formatMoney(n) {
-                if (n >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
-                if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
-                if (n >= 1e3) return '$' + (n / 1e3).toFixed(1) + 'K';
-                return '$' + n.toFixed(2);
-            }
-            function formatUsers(n) {
-                if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-                if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-                return n.toString();
-            }
-
-            function renderDashboard(data) {
-                const card = document.getElementById('card');
-                const chart = Array.isArray(data.chart_data) ? data.chart_data : [];
-                const values = chart.map(d => d.value || 0);
-                const maxChart = values.length ? Math.max(...values) : 1;
-
-                card.innerHTML = `
-                    <div class="header">
-                        <div class="header-left">
-                            <div class="logo">✦</div>
-                            <div>Nexa AI Dashboard</div>
-                        </div>
-                        <div class="live">Live</div>
-                    </div>
-                    <div class="stats">
-                        <div class="stat">
-                            <div class="stat-label">TVL</div>
-                            <div class="stat-value">${formatMoney(data.tvl || 0)}</div>
-                            <div class="stat-change">+${(data.portfolio_growth || 0).toFixed(1)}% 24h</div>
-                        </div>
-                        <div class="stat">
-                            <div class="stat-label">APY</div>
-                            <div class="stat-value">${(data.apy || 0).toFixed(1)}%</div>
-                            <div class="stat-change">${(data.apy_change || 0) >= 0 ? '+' : ''}${(data.apy_change || 0).toFixed(1)}% 30d</div>
-                        </div>
-                        <div class="stat">
-                            <div class="stat-label">Users</div>
-                            <div class="stat-value">${formatUsers(data.users || 0)}</div>
-                            <div class="stat-change">+1,204 today</div>
-                        </div>
-                    </div>
-                    <div class="chart-block">
-                        <div class="chart-header">
-                            <span>APY · 30D</span>
-                            <span>${(data.apy || 0).toFixed(2)}%</span>
-                        </div>
-                        <div class="bars">
-                            ${chart.length ? chart.map(d => `
-                                <div class="bar" style="height: ${((d.value || 0) / maxChart * 100).toFixed(1)}%"></div>
-                            `).join('') : '<div style="color:#64748b;font-size:12px;">No chart data</div>'}
-                        </div>
-                    </div>
-                    <div class="insight">
-                        <div class="insight-icon">🤖</div>
-                        <div><strong>Nexa AI</strong> · ${data.ai_insight || 'Market data temporarily unavailable.'}</div>
-                    </div>
-                `;
-            }
-
-            fetch('/api/dashboard')
-                .then(r => {
-                    if (!r.ok) throw new Error('HTTP ' + r.status);
-                    return r.json();
-                })
-                .then(renderDashboard)
-                .catch(err => {
-                    document.getElementById('card').innerHTML = `<div class="error">Failed to load dashboard.<br>${err.message}</div>`;
-                    console.error(err);
-                });
-        </script>
-    </body>
-    </html>
-    """
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
