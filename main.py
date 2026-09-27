@@ -29,10 +29,11 @@ SYSTEM_PROMPT = os.getenv(
     "SYSTEM_PROMPT",
     "You are NexaFi AI, a helpful assistant for a Web3 finance platform. "
     "Be concise, friendly, and accurate. Explain DeFi, trading, staking, and yields simply. "
+    "Do not use Markdown formatting like **, *, #, lists, or code blocks. Use plain text only. "
+    "Respond in the same language the user writes in. "
     "If the user asks for investment advice, remind them this is not financial advice."
-    "You are NexaFi AI... Do not use Markdown formatting like **, *, #, or bullet points. Use plain text only."
-
 )
+
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
