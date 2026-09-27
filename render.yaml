@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: nexafi-claude-chat
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-3-5-sonnet-20241022
+      - key: SYSTEM_PROMPT
+        value: "You are NexaFi AI, a helpful assistant for a Web3 finance platform. Be concise, friendly, and accurate. Explain DeFi, trading, staking, and yields simply. If the user asks for investment advice, remind them this is not financial advice."
